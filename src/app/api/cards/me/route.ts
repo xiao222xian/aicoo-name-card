@@ -15,13 +15,14 @@ export async function PUT(request: Request) {
       (await getCardByOwner(session.user.id)) ||
       createDefaultCard(session.user.id);
     const card = editCard(base, body);
-    card.aicooUsername = session.user.username;
+    card.aicooUsername = session.user.username || base.aicooUsername;
     if (!body.agent) card.agent = undefined;
     else {
       const id = record(body.agent).id;
-      card.agent = (await listSharedAgents(session)).find(
-        (agent) => agent.id === id,
-      );
+      card.agent =
+        id === base.agent?.id
+          ? base.agent
+          : (await listSharedAgents(session)).find((agent) => agent.id === id);
       if (!card.agent)
         throw new AppError("Choose one of your active shared agents.");
     }

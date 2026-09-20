@@ -44,6 +44,7 @@ beforeEach(() => {
   mocks.getCardBySlug.mockResolvedValue(createDefaultCard("them"));
   mocks.saveCard.mockImplementation((c) => c);
   mocks.listSharedAgents.mockResolvedValue([]);
+  mocks.query.mockResolvedValue([{ count: 1 }]);
   vi.stubEnv("AICOO_CONTACTS_ENABLED", "true");
   vi.stubEnv("BLOB_READ_WRITE_TOKEN", "test-only-not-a-real-token");
 });
@@ -80,6 +81,67 @@ it("server owns card identity and verified username", async () => {
   expect(mocks.saveCard).toHaveBeenCalledWith(
     expect.objectContaining({ ownerId: "me", aicooUsername: "verified" }),
   );
+});
+it("editing contacts preserves the stored agent without depending on upstream availability", async () => {
+  const card = {
+    ...createDefaultCard("me"),
+    aicooUsername: "previous",
+    agent: {
+      id: "bound",
+      label: "Agent",
+      url: "https://www.aicoo.io/a/a",
+      agentUrl: "https://www.aicoo.io/a/a",
+    },
+  };
+  mocks.requireSession.mockResolvedValue({ id: "s", user: { id: "me" } });
+  mocks.getCardByOwner.mockResolvedValue(card);
+  mocks.listSharedAgents.mockRejectedValue(new Error("unavailable"));
+  expect(
+    (
+      await save(
+        request({
+          ...card,
+          agent: { id: "bound", url: "https://evil.example" },
+        }),
+      )
+    ).status,
+  ).toBe(200);
+  expect(mocks.listSharedAgents).not.toHaveBeenCalled();
+  expect(mocks.saveCard).toHaveBeenCalledWith(
+    expect.objectContaining({ agent: card.agent, aicooUsername: "previous" }),
+  );
+});
+it.each([null, { error: "unrecognized" }])(
+  "unrecognized sync results stay unknown",
+  async (payload) => {
+    mocks.query.mockResolvedValue([{ data: { aicooUsername: "alice" } }]);
+    mocks.aicooRequest.mockResolvedValue(
+      Response.json(payload, { status: 409 }),
+    );
+    expect(
+      (await sync(request({}), { params: Promise.resolve({ id: "x" }) }))
+        .status,
+    ).toBe(502);
+    expect(mocks.query).toHaveBeenLastCalledWith(expect.any(String), [
+      "x",
+      "me",
+      "unknown",
+    ]);
+  },
+);
+it("HTML upstream errors record unknown instead of returning a JSON parse 500", async () => {
+  mocks.query.mockResolvedValue([{ data: { aicooUsername: "alice" } }]);
+  mocks.aicooRequest.mockResolvedValue(
+    new Response("<html>gateway error</html>", { status: 502 }),
+  );
+  expect(
+    (await sync(request({}), { params: Promise.resolve({ id: "x" }) })).status,
+  ).toBe(502);
+  expect(mocks.query).toHaveBeenLastCalledWith(expect.any(String), [
+    "x",
+    "me",
+    "unknown",
+  ]);
 });
 it("sync refuses unaccepted or nonparticipant exchange", async () => {
   mocks.query.mockResolvedValue([]);
@@ -138,23 +200,70 @@ it("cross origin upload is refused before storage", async () => {
 
 async function imageRequest(data: Uint8Array, type = "image/png") {
   const form = new FormData();
-  form.set("file",new File([new Uint8Array(data)],"image.png",{type}));
-  return new Request("https://www.agentport.world/api/upload",{method:"POST",headers:{origin:"https://www.agentport.world"},body:form});
+  form.set("file", new File([new Uint8Array(data)], "image.png", { type }));
+  return new Request("https://www.agentport.world/api/upload", {
+    method: "POST",
+    headers: { origin: "https://www.agentport.world" },
+    body: form,
+  });
 }
-it("decodes a real image and uploads only sanitized WebP",async()=>{
-  const png=await sharp({create:{width:2,height:2,channels:3,background:"red"}}).png().toBuffer();
-  mocks.query.mockResolvedValue([{count:1}]);mocks.put.mockResolvedValue({url:"https://example.public.blob.vercel-storage.com/image.webp"});
-  const response=await upload(await imageRequest(png));expect(response.status).toBe(200);
-  const args=mocks.put.mock.calls[0];expect(args[0]).toMatch(/^cards\/[a-f0-9]+\/.*\.webp$/);expect((await sharp(args[1]).metadata()).format).toBe("webp");
+it("decodes a real image and uploads only sanitized WebP", async () => {
+  const png = await sharp({
+    create: { width: 2, height: 2, channels: 3, background: "red" },
+  })
+    .png()
+    .toBuffer();
+  mocks.query.mockResolvedValue([{ count: 1 }]);
+  mocks.put.mockResolvedValue({
+    url: "https://example.public.blob.vercel-storage.com/image.webp",
+  });
+  const response = await upload(await imageRequest(png));
+  expect(response.status).toBe(200);
+  const args = mocks.put.mock.calls[0];
+  expect(args[0]).toMatch(/^cards\/[a-f0-9]+\/.*\.webp$/);
+  expect((await sharp(args[1]).metadata()).format).toBe("webp");
 });
-it("rejects corrupt images despite a plausible magic header",async()=>{
-  expect((await upload(await imageRequest(new Uint8Array([255,216,255,224]),"image/jpeg"))).status).toBe(415);expect(mocks.put).not.toHaveBeenCalled();
+it("rejects corrupt images despite a plausible magic header", async () => {
+  expect(
+    (
+      await upload(
+        await imageRequest(new Uint8Array([255, 216, 255, 224]), "image/jpeg"),
+      )
+    ).status,
+  ).toBe(415);
+  expect(mocks.put).not.toHaveBeenCalled();
 });
-it("refuses an exhausted upload quota",async()=>{
-  const png=await sharp({create:{width:2,height:2,channels:3,background:"red"}}).png().toBuffer();mocks.query.mockResolvedValue([]);
-  expect((await upload(await imageRequest(png))).status).toBe(429);expect(mocks.put).not.toHaveBeenCalled();
+it("refuses an exhausted upload quota", async () => {
+  const png = await sharp({
+    create: { width: 2, height: 2, channels: 3, background: "red" },
+  })
+    .png()
+    .toBuffer();
+  mocks.query.mockResolvedValue([]);
+  expect((await upload(await imageRequest(png))).status).toBe(429);
+  expect(mocks.put).not.toHaveBeenCalled();
 });
-it("refuses declared oversized uploads before decoding",async()=>{
-  const request=new Request("https://www.agentport.world/api/upload",{method:"POST",headers:{origin:"https://www.agentport.world","content-type":"multipart/form-data; boundary=abc","content-length":"99999999"},body:"abc"});
-  expect((await upload(request)).status).toBe(413);expect(mocks.put).not.toHaveBeenCalled();
+it("exhausted quota rejects even a corrupt image before decoding", async () => {
+  mocks.query.mockResolvedValue([]);
+  expect(
+    (
+      await upload(
+        await imageRequest(new Uint8Array([255, 216, 255, 224]), "image/jpeg"),
+      )
+    ).status,
+  ).toBe(429);
+  expect(mocks.put).not.toHaveBeenCalled();
+});
+it("refuses declared oversized uploads before decoding", async () => {
+  const request = new Request("https://www.agentport.world/api/upload", {
+    method: "POST",
+    headers: {
+      origin: "https://www.agentport.world",
+      "content-type": "multipart/form-data; boundary=abc",
+      "content-length": "99999999",
+    },
+    body: "abc",
+  });
+  expect((await upload(request)).status).toBe(413);
+  expect(mocks.put).not.toHaveBeenCalled();
 });

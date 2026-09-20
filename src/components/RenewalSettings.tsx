@@ -15,7 +15,7 @@ export function RenewalSettings() {
       .then((p) => {
         if (active) {
           setEnabled(p.enabled);
-          setStatus(p.status);
+          setStatus(p.message || p.status);
         }
       })
       .catch(() => {
@@ -42,6 +42,17 @@ export function RenewalSettings() {
       setStatus(p.status);
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Please retry.");
+      // The write may have completed even when its response was lost.
+      try {
+        const r = await fetch("/api/aicoo/renewal");
+        if (r.ok) {
+          const p = await r.json();
+          setEnabled(p.enabled);
+          setStatus(p.message || p.status);
+        }
+      } catch {
+        /* Retain the actionable error if reconciliation also fails. */
+      }
     } finally {
       setBusy(false);
     }

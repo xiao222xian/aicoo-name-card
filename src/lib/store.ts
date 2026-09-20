@@ -198,7 +198,7 @@ export async function deleteSession(id: string | undefined) {
 // A cross-instance lease prevents rotating a refresh token twice. Never recreate
 // a session deleted by logout while a refresh request was in flight.
 export async function claimRefresh(id: string, lease: string) {
-  const until = Date.now() + 30000;
+  const until = Date.now() + 60000;
   if (getSql()) {
     const rows = await query(
       `UPDATE card_sessions SET data = data || jsonb_build_object('refreshLease',$2::text,'refreshUntil',$3::bigint)
@@ -215,6 +215,27 @@ export async function claimRefresh(id: string, lease: string) {
     return true;
   });
 }
+export async function extendRefresh(id: string, lease: string) {
+  const now = Date.now();
+  const until = now + 60000;
+  if (getSql()) {
+    const rows = await query(
+      `UPDATE card_sessions SET data=jsonb_set(data,'{refreshUntil}',$3::jsonb)
+      WHERE id=$1 AND data->>'refreshLease'=$2 AND (data->>'refreshUntil')::bigint>$4 RETURNING id`,
+      [id, lease, JSON.stringify(until), now],
+    );
+    return rows.length > 0;
+  }
+  return mutate((db) => {
+    const session = db.sessions.find(
+      (s) =>
+        s.id === id && s.refreshLease === lease && (s.refreshUntil || 0) > now,
+    );
+    if (!session) return false;
+    session.refreshUntil = until;
+    return true;
+  });
+}
 export async function finishRefresh(
   id: string,
   lease: string,
@@ -223,14 +244,17 @@ export async function finishRefresh(
   const next = { ...session, refreshLease: undefined, refreshUntil: undefined };
   if (getSql()) {
     const rows = await query(
-      `UPDATE card_sessions SET data=$3::jsonb WHERE id=$1 AND data->>'refreshLease'=$2 RETURNING id`,
-      [id, lease, JSON.stringify(next)],
+      `UPDATE card_sessions SET data=$3::jsonb WHERE id=$1 AND data->>'refreshLease'=$2 AND (data->>'refreshUntil')::bigint>$4 RETURNING id`,
+      [id, lease, JSON.stringify(next), Date.now()],
     );
     return rows.length > 0;
   }
   return mutate((db) => {
     const index = db.sessions.findIndex(
-      (s) => s.id === id && s.refreshLease === lease,
+      (s) =>
+        s.id === id &&
+        s.refreshLease === lease &&
+        (s.refreshUntil || 0) > Date.now(),
     );
     if (index < 0) return false;
     db.sessions[index] = next;

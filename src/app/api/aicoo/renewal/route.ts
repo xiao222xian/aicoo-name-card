@@ -4,12 +4,11 @@ import { readJson, sameOrigin } from "@/lib/http";
 import { record } from "@/lib/validation";
 import { getCardByOwner, query } from "@/lib/store";
 import { listSharedAgents } from "@/lib/aicoo";
-import { renewOwner } from "@/lib/renewal";
 export async function GET() {
   try {
     const session = await requireSession();
     const rows = await query(
-      "SELECT enabled,status,checked_at FROM card_renewals WHERE owner_id=$1",
+      "SELECT enabled,status,message,checked_at FROM card_renewals WHERE owner_id=$1",
       [session.user.id],
     );
     return Response.json(rows[0] || { enabled: false, status: "disabled" });
@@ -26,7 +25,7 @@ export async function POST(request: Request) {
       throw new AppError("Choose whether renewal is enabled.");
     if (!body.enabled) {
       await query(
-        "UPDATE card_renewals SET enabled=false,status='disabled' WHERE owner_id=$1",
+        "UPDATE card_renewals SET enabled=false,status='disabled',message=NULL,lease_token=NULL,lease_until=NULL WHERE owner_id=$1",
         [session.user.id],
       );
       return Response.json({ enabled: false, status: "disabled" });
@@ -41,12 +40,12 @@ export async function POST(request: Request) {
       throw new AppError("Save a card with an active agent first.", 409);
     await query(
       `INSERT INTO card_renewals(owner_id,session_id,agent_id,enabled) VALUES($1,$2,$3,true)
-      ON CONFLICT(owner_id) DO UPDATE SET session_id=EXCLUDED.session_id,agent_id=EXCLUDED.agent_id,enabled=true,status='enabled'`,
+      ON CONFLICT(owner_id) DO UPDATE SET session_id=EXCLUDED.session_id,agent_id=EXCLUDED.agent_id,enabled=true,status='enabled',message=NULL,checked_at=NULL,lease_token=NULL,lease_until=NULL`,
       [session.user.id, session.id, card.agent.id],
     );
     return Response.json({
       enabled: true,
-      status: await renewOwner(session.user.id),
+      status: "enabled",
     });
   } catch (error) {
     return errorResponse(error);

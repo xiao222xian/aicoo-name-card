@@ -1,8 +1,9 @@
 import { AppError } from "./errors";
-import { getBaseUrl } from "./auth";
 
 export function sameOrigin(request: Request) {
-  if (request.headers.get("origin") !== new URL(getBaseUrl()).origin)
+  // The request URL is supplied by the server adapter. Never trust a caller's
+  // x-forwarded-host, or the build-time public URL (which breaks previews).
+  if (request.headers.get("origin") !== new URL(request.url).origin)
     throw new AppError("Cross-site request refused.", 403);
 }
 export async function readLimited(request: Request, max: number) {

@@ -56,7 +56,7 @@ The production OAuth redirect remains **https://www.agentport.world** (root,
 not /callback). The home route forwards code/state to the internal callback.
 For local auth, the administrator must register the exact local redirect and origin.
 
-Apply migrations/001_connections.sql explicitly to a backed-up **development**
+Apply migrations/001_connections.sql, then migrations/002_review_safety.sql explicitly to a backed-up **development**
 database before integration testing. There is no request-time schema creation.
 Without a DB, local card/session storage still works in ignored .data/db.json for
 development only; exchanges, uploads and renewal settings require PostgreSQL.

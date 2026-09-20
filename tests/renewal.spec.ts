@@ -55,7 +55,7 @@ it("renewal changes expiry only, never access permissions", async () => {
 });
 it("revoked or absent links are not resurrected", async () => {
   mocks.listSharedAgents.mockResolvedValue([]);
-  expect(await renewOwner("a")).toContain("unavailable");
+  expect(await renewOwner("a")).toBe("failed");
   expect(mocks.aicooRequest).not.toHaveBeenCalled();
 });
 it("disabled or leased renewal has no side effects", async () => {
@@ -65,6 +65,22 @@ it("disabled or leased renewal has no side effects", async () => {
 });
 it("a different bound agent cannot be renewed with old consent", async () => {
   mocks.getCardByOwner.mockResolvedValue({ agent: { id: "new" } });
-  expect(await renewOwner("a")).toContain("changed");
+  expect(await renewOwner("a")).toBe("failed");
   expect(mocks.aicooRequest).not.toHaveBeenCalled();
+});
+it("a disabled or superseded worker cannot report success", async () => {
+  mocks.query
+    .mockResolvedValueOnce([
+      { owner_id: "a", session_id: "s", agent_id: "agent" },
+    ])
+    .mockResolvedValue([]);
+  expect(await renewOwner("a")).toBe("superseded");
+  const cardWrite = mocks.query.mock.calls.find(([sql]) =>
+    sql.includes("UPDATE name_cards"),
+  );
+  expect(cardWrite?.[0]).toContain("r.lease_token=$4");
+  expect(cardWrite?.[0]).toContain("r.enabled=true");
+  const final = mocks.query.mock.calls.at(-1)!;
+  expect(final[0]).toContain("lease_token=$3");
+  expect(final[1][2]).toBe(cardWrite?.[1][3]);
 });

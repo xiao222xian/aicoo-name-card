@@ -37,30 +37,37 @@ export async function POST(
         "A verified human Aicoo username is unavailable. Ask this person to reconnect and save their card.",
         409,
       );
+    // Mark an attempt as uncertain before sending: a timeout or lost response
+    // must not leave an old successful status in the local UI.
+    await query(
+      `INSERT INTO card_connection_notes(connection_id,owner_id,sync_status) VALUES($1,$2,'unknown')
+      ON CONFLICT(connection_id,owner_id) DO UPDATE SET sync_status='unknown'`,
+      [id, session.user.id],
+    );
     const response = await aicooRequest(session, "/net/contacts/request", {
       method: "POST",
       body: JSON.stringify({ to: username }),
     });
-    const payload = await response.json();
-    let status: string;
-    if (response.ok && payload.success && payload.status === "approved")
+    const payload = await response.json().catch(() => null);
+    let status = "unknown";
+    if (response.ok && payload?.success && payload.status === "approved")
       status = "connected";
-    else if (response.ok && payload.success && payload.status === "requested")
+    else if (response.ok && payload?.success && payload.status === "requested")
       status = "requested";
-    else if (response.status === 409 && payload.error === "already_connected")
+    else if (response.status === 409 && payload?.error === "already_connected")
       status = "connected";
-    else if (response.status === 409 && payload.error === "already_pending")
+    else if (response.status === 409 && payload?.error === "already_pending")
       status = "requested";
-    else
-      throw new AppError(
-        "Aicoo could not confirm the connection. Please retry or check your Aicoo contacts.",
-        502,
-      );
     await query(
       `INSERT INTO card_connection_notes(connection_id,owner_id,sync_status) VALUES($1,$2,$3)
       ON CONFLICT(connection_id,owner_id) DO UPDATE SET sync_status=EXCLUDED.sync_status`,
       [id, session.user.id, status],
     );
+    if (status === "unknown")
+      throw new AppError(
+        "Aicoo could not confirm the connection. Check your Aicoo contacts before retrying.",
+        502,
+      );
     return Response.json({ status });
   } catch (error) {
     return errorResponse(error);

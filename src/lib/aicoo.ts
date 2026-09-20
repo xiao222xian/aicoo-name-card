@@ -27,7 +27,7 @@ export async function listSharedAgents(
   }
 
   const payload = await response.json();
-  if (!Array.isArray(payload.links))
+  if (!payload || !Array.isArray(payload.links))
     throw new AppError("Unexpected agent response. Please retry.", 502);
   const links: AicooShareLink[] = payload.links;
 
@@ -36,12 +36,20 @@ export async function listSharedAgents(
       (link) =>
         link?.id && link.isActive === true && (link.url || link.agentUrl),
     )
-    .map((link) => ({
-      id: String(link.id || link.token || link.url),
-      label: String(link.label || "Aicoo Shared Agent"),
-      url: safeUrl(link.url || link.agentUrl,"Agent URL"),
-      agentUrl: safeUrl(link.agentUrl || link.url,"Agent URL"),
-      isActive: Boolean(link.isActive ?? true),
-      expiresAt: link.expiresAt,
-    }));
+    .flatMap((link) => {
+      try {
+        return [
+          {
+            id: String(link.id || link.token || link.url),
+            label: String(link.label || "Aicoo Shared Agent"),
+            url: safeUrl(link.url || link.agentUrl, "Agent URL"),
+            agentUrl: safeUrl(link.agentUrl || link.url, "Agent URL"),
+            isActive: Boolean(link.isActive ?? true),
+            expiresAt: link.expiresAt,
+          },
+        ];
+      } catch {
+        return [];
+      }
+    });
 }

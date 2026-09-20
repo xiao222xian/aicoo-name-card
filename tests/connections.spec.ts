@@ -23,6 +23,9 @@ import {
 beforeAll(async () => {
   state.db = new PGlite();
   await state.db.exec(await readFile("migrations/001_connections.sql", "utf8"));
+  await state.db.exec(
+    await readFile("migrations/002_review_safety.sql", "utf8"),
+  );
 });
 afterAll(async () => {
   await state.db.close();
@@ -39,9 +42,25 @@ beforeEach(async () => {
   }
 });
 describe("card exchange database", () => {
-  it("concurrent reciprocal submissions create exactly one pair",async()=>{
-    const results=await Promise.allSettled([requestConnection("a","b","one"),requestConnection("b","a","two")]);
-    expect(results.filter(r=>r.status==="fulfilled")).toHaveLength(1);
+  it("retains terminal history and allows a fresh exchange", async () => {
+    const first = await requestConnection("a", "b", "First meeting");
+    await transition(first.id, "a", "cancel");
+    const second = await requestConnection("b", "a", "Again");
+    await transition(second.id, "a", "reject");
+    const third = await requestConnection("a", "b", "Later");
+    expect(third.id).not.toBe(first.id);
+    expect(await listConnections("a")).toHaveLength(3);
+    await transition(third.id, "b", "accept");
+    await expect(
+      requestConnection("b", "a", "Duplicate"),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+  it("concurrent reciprocal submissions create exactly one pair", async () => {
+    const results = await Promise.allSettled([
+      requestConnection("a", "b", "one"),
+      requestConnection("b", "a", "two"),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect(await listConnections("a")).toHaveLength(1);
   });
   it("creates one pair only, including reciprocal requests", async () => {

@@ -27,16 +27,8 @@ export async function POST(request: Request) {
     const type = imageType(data);
     if (!type || type.mime !== file.type)
       throw new AppError("Only PNG, JPEG and WebP images are supported.", 415);
-    let sanitized: Buffer;
-    try {
-      // Decode, bound pixel count and strip metadata rather than trusting a magic header.
-      sanitized = await sharp(data, { limitInputPixels: 16000000 })
-        .rotate()
-        .webp({ quality: 85 })
-        .toBuffer();
-    } catch {
-      throw new AppError("Invalid image, or image exceeds 16 megapixels.", 415);
-    }
+    // Reserve attempts before image decoding; corrupt inputs and storage failures
+    // intentionally consume quota so retries cannot bypass the CPU bound.
     const quota = await query(
       `INSERT INTO card_upload_quotas(owner_id,day,count) VALUES($1,CURRENT_DATE,1)
       ON CONFLICT(owner_id,day) DO UPDATE SET count=card_upload_quotas.count+1
@@ -48,6 +40,16 @@ export async function POST(request: Request) {
         "Daily upload limit reached. Please try tomorrow.",
         429,
       );
+    let sanitized: Buffer;
+    try {
+      // Decode, bound pixel count and strip metadata rather than trusting a magic header.
+      sanitized = await sharp(data, { limitInputPixels: 16000000 })
+        .rotate()
+        .webp({ quality: 85 })
+        .toBuffer();
+    } catch {
+      throw new AppError("Invalid image, or image exceeds 16 megapixels.", 415);
+    }
     const owner = createHash("sha256")
       .update(session.user.id)
       .digest("hex")
@@ -59,6 +61,7 @@ export async function POST(request: Request) {
         access: "public",
         contentType: "image/webp",
         addRandomSuffix: true,
+        token: process.env.BLOB_READ_WRITE_TOKEN,
       },
     );
     return Response.json({ url: blob.url });

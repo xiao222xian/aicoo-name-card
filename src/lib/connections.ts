@@ -14,7 +14,7 @@ export async function requestConnection(
     .digest("hex");
   const rows = await query(
     `INSERT INTO card_connections(id,requester_id,recipient_id,pair_key,status,event)
-    VALUES($1,$2,$3,$4,'pending',$5) ON CONFLICT(pair_key) DO NOTHING RETURNING id`,
+    VALUES($1,$2,$3,$4,'pending',$5) ON CONFLICT(pair_key) WHERE status IN ('pending','accepted') DO NOTHING RETURNING id`,
     [randomUUID(), from, to, key, event],
   );
   if (!rows.length)

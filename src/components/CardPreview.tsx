@@ -14,10 +14,10 @@ import {
   UserPlus,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import type { NameCard } from "@/lib/types";
+import type { PublicNameCard } from "@/lib/public-card";
 
 type Props = {
-  card: NameCard;
+  card: PublicNameCard;
   publicUrl: string;
   exportMode?: boolean;
   hideQr?: boolean;
